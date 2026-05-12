@@ -1,0 +1,16 @@
+[Unit]
+Description=Accelerometer Node A
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=@NODE_A_BINARY_PATH@ @SERVER_PORT@
+WorkingDirectory=@PROJECT_ROOT_PATH@
+Restart=on-failure
+
+StandardOutput=journal
+StandardError=journal
+Environment=LD_LIBRARY_PATH=@LD_LIBRARY_PATH@
+
+[Install]
+WantedBy=default.target

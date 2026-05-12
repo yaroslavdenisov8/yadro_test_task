@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+service AccelerometerService {
+  rpc StreamAccelDataA(stream AccelPacket) returns (stream AccelModule);
+  rpc StreamAccelDataB(stream AccelModule) returns (stream AccelPacket);
+}
+
+message AccelPacket {
+  uint32 version = 1;
+  int64 timestamp = 2;
+  float x = 3;
+  float y = 4;
+  float z = 5;
+}
+
+message AccelModule {
+  uint32 version = 1;
+  int64 timestamp = 2;
+  float module = 3;
+}
