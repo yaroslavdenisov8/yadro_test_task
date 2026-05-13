@@ -1,13 +1,15 @@
 #pragma once
-#include <grpcpp/grpcpp.h>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <grpcpp/grpcpp.h>
 #include <yaml-cpp/yaml.h>
+
+#include "general.h"
 #include "accel.grpc.pb.h"
 #include "accel.pb.h"
 
 #define CURRENT_MESSAGE_VERSION 1
-#define EPS 1e-3f
 
 class Service;
 class CallA;
@@ -21,9 +23,13 @@ struct ServiceState {
     AccelPacket latest_pkt;
     bool has_latest = false;
     bool b_is_busy = false;
+
+    std::optional<AccelPacket> last_pkt;
 };
 
 class CallA : public grpc::ServerBidiReactor<AccelPacket, AccelModule> {
+    friend class Service;
+
 public:
     CallA(grpc::CallbackServerContext* ctx, Service* srv);
     void Start();
@@ -31,7 +37,6 @@ public:
     void Cancel();
 
 private:
-    friend class Service;
     void OnReadDone(bool ok) override;
     void OnWriteDone(bool ok) override;
     void OnDone() override;
@@ -45,13 +50,14 @@ private:
 };
 
 class CallB : public grpc::ServerBidiReactor<AccelModule, AccelPacket> {
+    friend class Service;
+
 public:
     CallB(grpc::CallbackServerContext* ctx, Service* srv);
     void Start();
     void Cancel();
 
 private:
-    friend class Service;
     void OnReadDone(bool ok) override;
     void OnWriteDone(bool ok) override;
     void OnDone() override;
@@ -65,19 +71,21 @@ private:
 };
 
 class Service : public AccelerometerService::CallbackService {
+    friend class CallA;
+    friend class CallB;
+
 public:
     explicit Service(std::string api_key);
     grpc::ServerBidiReactor<AccelPacket, AccelModule>* StreamAccelDataA(grpc::CallbackServerContext* context) override;
     grpc::ServerBidiReactor<AccelModule, AccelPacket>* StreamAccelDataB(grpc::CallbackServerContext* context) override;
 
     void TryTriggerBWrite();
-    bool IsDuplicate(const AccelPacket& pkt);
     bool CheckApiKey(grpc::CallbackServerContext* context);
     void Shutdown();
 
 private:
-    friend class CallA;
-    friend class CallB;
+    bool IsDuplicate(const AccelPacket& pkt);
+
     ServiceState _state;
     std::string _api_key;
 };

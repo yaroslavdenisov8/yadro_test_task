@@ -18,7 +18,8 @@ void CallA::Start() {
         std::lock_guard<std::mutex> lock(_srv->_state.mtx);
         _srv->_state.call_a = this;
     }
-    if (!_cancelled) StartRead(&_read_pkt);
+    if (!_cancelled)
+        StartRead(&_read_pkt);
 }
 
 void CallA::SendModule(const AccelModule& mod) {
@@ -35,15 +36,19 @@ void CallA::OnReadDone(bool ok) {
 
     if (_read_pkt.version() > CURRENT_MESSAGE_VERSION)
         spdlog::warn("recieved partially supporting version {}", _read_pkt.version());
-    spdlog::info("[A->S] received packet: ts={} | x={:.3f} y={:.3f} z={:.3f}", _read_pkt.timestamp(), _read_pkt.x(), _read_pkt.y(), _read_pkt.z());
+    spdlog::info("[A->S] received packet: ts={} | x={:.3f} y={:.3f} z={:.3f}", 
+                 _read_pkt.timestamp(), _read_pkt.x(), _read_pkt.y(), _read_pkt.z());
 
-    if (!_srv->IsDuplicate(_read_pkt)) {
+    bool is_dup = _srv->IsDuplicate(_read_pkt);
+
+    if (!is_dup) {
         std::lock_guard<std::mutex> lock(_srv->_state.mtx);
         _srv->_state.latest_pkt = _read_pkt;
         _srv->_state.has_latest = true;
     } else {
         spdlog::warn("[FILTER] duplicate skipped: ts={}", _read_pkt.timestamp());
     }
+
     _srv->TryTriggerBWrite();
     StartRead(&_read_pkt);
 }
@@ -131,6 +136,23 @@ bool Service::CheckApiKey(grpc::CallbackServerContext* context) {
     return (it != metadata.end() && it->second == _api_key);
 }
 
+bool Service::IsDuplicate(const AccelPacket& pkt) {
+    std::lock_guard<std::mutex> lock(_state.mtx);
+
+    if (!_state.last_pkt.has_value()) {
+        _state.last_pkt = pkt;
+        return false;
+    }
+
+    const auto& last = _state.last_pkt.value();
+    bool dup = std::abs(pkt.x() - last.x()) < EPS &&
+               std::abs(pkt.y() - last.y()) < EPS &&
+               std::abs(pkt.z() - last.z()) < EPS;
+
+    _state.last_pkt = pkt;
+    return dup;
+}
+
 grpc::ServerBidiReactor<AccelPacket, AccelModule>*
 Service::StreamAccelDataA(grpc::CallbackServerContext* context) {
     if (!CheckApiKey(context)) {
@@ -179,15 +201,6 @@ void Service::TryTriggerBWrite() {
         spdlog::info("[BRIDGE] forwarding to B: ts={}", pkt.timestamp());
         target->StartWrite(&target->_write_pkt);
     }
-}
-
-bool Service::IsDuplicate(const AccelPacket& pkt) {
-    std::lock_guard<std::mutex> lock(_state.mtx);
-    if (!_state.has_latest) return false;
-    const auto& last = _state.latest_pkt;
-    return std::abs(pkt.x() - last.x()) < EPS &&
-           std::abs(pkt.y() - last.y()) < EPS &&
-           std::abs(pkt.z() - last.z()) < EPS;
 }
 
 void Service::Shutdown() {
