@@ -12,14 +12,11 @@
 
 #define MAX_SHUTDOWN_TIME_MS 1000
 
-std::unique_ptr<grpc::Server> server;
+std::atomic<bool> is_running{true};
 
 void sig_handler(int sig_num) {
     std::cout << "Received signal " << sig_num << ". Shutting down...\n";
-    if (server) {
-        gpr_timespec deadline = gpr_time_from_millis(MAX_SHUTDOWN_TIME_MS, GPR_TIMESPAN);
-        server->Shutdown(deadline);
-    }
+    is_running.store(false);
 }
 
 void bind_signal() {
@@ -28,6 +25,7 @@ void bind_signal() {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
 }
 
 int main(int argc, char **argv) {
@@ -67,7 +65,7 @@ int main(int argc, char **argv) {
     builder.AddListeningPort("0.0.0.0:" + std::to_string(port), grpc::SslServerCredentials(ssl_opts));
     builder.RegisterService(&service);
 
-    server = builder.BuildAndStart();
+    std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
     if (!server) {
         spdlog::error("Failed to start server on port {}", port);
         return 1;
@@ -75,6 +73,13 @@ int main(int argc, char **argv) {
 
     spdlog::info("Server listening on port {}", port);
 
+    while (is_running.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    spdlog::info("Shutdown initiated...");
+
+    service.Shutdown();
+    server->Shutdown();
     server->Wait();
 
     spdlog::info("Server stopped");

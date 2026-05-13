@@ -1,10 +1,8 @@
 #include <spdlog/spdlog.h>
-
 #include "node_b.h"
 
-NodeB::NodeB(const std::string& server_address, int connect_attemps, int connect_delay_ms, std::string api_key)
-: _connect_attemps(connect_attemps), _connect_delay_ms(connect_delay_ms), _api_key(std::move(api_key))
-{
+NodeB::NodeB(const std::string& server_address, int connect_attempts, int connect_delay_ms, std::string api_key)
+: _connect_attempts(connect_attempts), _connect_delay_ms(connect_delay_ms), _api_key(std::move(api_key)) {
     grpc::SslCredentialsOptions ssl_opts;
     ssl_opts.pem_root_certs = read_file(CERT_DIR "ca.crt");
     ssl_opts.pem_private_key = read_file(CERT_DIR "client.key");
@@ -18,7 +16,7 @@ NodeB::NodeB(const std::string& server_address, int connect_attemps, int connect
 bool NodeB::connect() {
     _context = std::make_unique<grpc::ClientContext>();
     _context->AddMetadata("x-api-key", _api_key);
-
+    
     _stream = _stub->StreamAccelDataB(_context.get());
     if (!_stream) {
         spdlog::error("failed to create gRPC stream to server");
@@ -29,39 +27,49 @@ bool NodeB::connect() {
 }
 
 void NodeB::run(std::atomic<bool>& is_running) {
-    for (int attempt = 0; attempt < _connect_attemps && is_running.load(); ++attempt) {
-        if (connect()) {
-            AccelPacket pkt;
-            AccelModule mod;
-
-            while (is_running.load() && _stream->Read(&pkt)) {
-                if (pkt.version() > CURRENT_MESSAGE_VERSION)
-                    spdlog::warn("recieved partially supporting version {}", pkt.version());
-                spdlog::info("[S->B] received packet: ts={} x={:.3f} y={:.3f} z={:.3f}", pkt.timestamp(), pkt.x(), pkt.y(), pkt.z());
-
-                mod = response(pkt);
-                spdlog::info("[B] computed module: ts={} val={:.3f}", mod.timestamp(), mod.module());
-
-                if (!_stream->Write(mod)) {
-                    spdlog::warn("node B write failed: server likely closed connection");
-                    break;
-                }
-                spdlog::info("[B->S] sent module: ts={} val={:.3f}", mod.timestamp(), mod.module());
+    for (int attempt = 0; attempt < _connect_attempts && is_running.load(); ++attempt) {
+        if (!connect()) {
+            spdlog::warn("node B connection failed (retry {}/{})", attempt + 1, _connect_attempts);
+            if (is_running.load()) {
+                spdlog::info("node B waiting {}ms before retry...", _connect_delay_ms);
+                std::this_thread::sleep_for(std::chrono::milliseconds(_connect_delay_ms));
             }
+            continue;
+        }
 
-            spdlog::warn("node B read loop ended: stream closed by server");
-            _stream->WritesDone();
+        AccelPacket pkt;
+        AccelModule mod;
 
-            grpc::Status status = _stream->Finish();
-            if (status.ok())
-                spdlog::info("node B stream closed OK");
-            else
-                spdlog::warn("node B stream error: {}", status.error_message());
-        } else
-            spdlog::warn("node A connection failed (retry {}/{})", attempt + 1, _connect_attemps);
+        while (is_running.load() && _stream->Read(&pkt)) {
+            if (pkt.version() > CURRENT_MESSAGE_VERSION)
+                spdlog::warn("recieved partially supporting version {}", pkt.version());
+            spdlog::info("[S->B] received packet: ts={} x={:.3f} y={:.3f} z={:.3f}", 
+                         pkt.timestamp(), pkt.x(), pkt.y(), pkt.z());
+
+            mod = response(pkt);
+            spdlog::info("[B] computed module: ts={} val={:.3f}", mod.timestamp(), mod.module());
+
+            if (!_stream->Write(mod)) {
+                spdlog::warn("node B write failed: server likely closed connection");
+                break;
+            }
+            spdlog::info("[B->S] sent module: ts={} val={:.3f}", mod.timestamp(), mod.module());
+        }
+
+        spdlog::warn("node B read loop ended: stream closed by server");
+
+        _stream->WritesDone();
+        grpc::Status status = _stream->Finish();
+        if (status.ok())
+            spdlog::info("node B stream closed OK");
+        else
+            spdlog::warn("node B stream error: {}", status.error_message());
+
+        _stream.reset();
+        _context.reset();
 
         if (is_running.load()) {
-            spdlog::info("node A waiting {}ms before retry...", _connect_delay_ms);
+            spdlog::info("node B waiting {}ms before retry...", _connect_delay_ms);
             std::this_thread::sleep_for(std::chrono::milliseconds(_connect_delay_ms));
         }
     }
@@ -78,5 +86,7 @@ AccelModule NodeB::response(const AccelPacket &pkt) {
 }
 
 void NodeB::cancel() {
-    if (_context) _context->TryCancel();
+    if (_context) {
+        _context->TryCancel();
+    }
 }

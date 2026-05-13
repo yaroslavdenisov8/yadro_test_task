@@ -23,7 +23,7 @@ private:
     std::unique_ptr<AccelerometerService::Stub> _stub;
     std::unique_ptr<grpc::ClientContext> _context;
     std::unique_ptr<grpc::ClientReaderWriter<AccelModule, AccelPacket>> _stream;
-    int _connect_attemps;
+    int _connect_attempts;
     int _connect_delay_ms;
     std::string _api_key;
 };

@@ -20,6 +20,7 @@ void bind_signal() {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
 }
 
 int main(int argc, char** argv) {
@@ -60,6 +61,18 @@ int main(int argc, char** argv) {
 
     NodeB node(server_addr, connect_attempts, connect_delay_ms, api_key);
     node_ptr = &node;
+
+    std::thread worker([&node]() {
+        node.run(is_running);
+    });
+
+    while (is_running.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    if (worker.joinable()) {
+        worker.join();
+    }
     node.run(is_running);
 
     return 0;

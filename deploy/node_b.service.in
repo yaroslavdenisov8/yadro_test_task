@@ -7,6 +7,7 @@ Type=simple
 ExecStart=@NODE_B_BINARY_PATH@ @SERVER_PORT@
 WorkingDirectory=@PROJECT_ROOT_PATH@
 Restart=on-failure
+TimeoutStopSec=5
 
 StandardOutput=journal
 StandardError=journal
